@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/ipc.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include "Trie.h"
@@ -14,6 +15,7 @@
 #define BUFFSIZE 256
 
 typedef void Sigfunc(int);
+Trie t;
 
 Sigfunc* Signal(int signo, Sigfunc* func)
 {
@@ -105,9 +107,6 @@ char* performOperation(int argc, char** argv, Trie* t)
 
 void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 {
-	Trie t;
-	t.root = NULL;
-
 	int n;
 	char buff[BUFFSIZE];
 	
@@ -161,6 +160,9 @@ void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 
 void main(int argc, char** argv)
 {
+	t.root = NULL;
+	key_t myKey = ftok(".", 'a');
+
 	int listenfd;
 	struct sockaddr_in servaddr;
 
@@ -203,7 +205,7 @@ void main(int argc, char** argv)
 
 	// Attach the signal handler
 	
-	Signal(SIGCHLD, sig_child);	
+	Signal(SIGCHLD, sig_child);
 
 	// wait for connections
 	while (1)
@@ -224,8 +226,7 @@ void main(int argc, char** argv)
 		// fork and process
 		if ((childpid = fork()) == 0)
 		{
-			close(listenfd);
-
+			close(listenfd);	
 			do_task(connfd, &cliaddr, sizeof(clilen));
 			
 			exit(0);
