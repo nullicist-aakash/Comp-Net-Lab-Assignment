@@ -38,17 +38,76 @@ void sig_child(int signo)
 		printf("Child terminated: %d\n", pid);
 }
 
-void performOperation(int argc, char** argv)
+char* performOperation(int argc, char** argv, Trie* t)
 {
-	printf("args received count: %d\n\t", argc);
+/*	printf("Received: ");
 
 	for (int i = 0; i < argc; ++i)
-		printf("%s, ", argv[i]);
+		printf("'%s' ", argv[i]);
 	printf("\n");
+*/
+	char* reqErr = "Invalid Request";
+
+	if (argc < 1 || argc > 3)
+		return reqErr;
+	if (argc == 1 && strcmp("Bye", argv[0]) != 0)
+		return reqErr;
+	if (argc == 2 && strcmp("get", argv[0]) != 0 && strcmp("del", argv[0]) != 0)
+			return reqErr;
+
+	if (argc == 3 && strcmp("put", argv[0]))
+		return reqErr;
+
+
+	// put operation
+	if (strcmp(argv[0], "put") == 0)
+	{
+		int key = atoi(argv[1]);
+		char* val = argv[2];
+
+		char** storedVal = put(t, key);
+
+		if (*storedVal != NULL)
+			return "Key already exists";
+		
+		*storedVal = calloc(strlen(val), sizeof(char));
+		strcpy(*storedVal, val);
+		return "OK";
+	}
+
+	// get operation
+	if (strcmp(argv[0], "get") == 0)
+	{
+		int key = atoi(argv[1]);
+		char* storedVal = get(t, key);
+
+		if (storedVal == NULL)
+			return "Key not found";
+
+		return storedVal;
+	}
+
+	// delete operation
+	if (strcmp(argv[0], "del") == 0)
+	{
+		int key = atoi(argv[1]);
+		char** storedVal = put(t, key);
+		if (*storedVal == NULL)
+			return "Key not found";
+		free(*storedVal);
+		*storedVal = NULL;
+		return "OK";
+	}
+
+	// This must be good bye
+	return "Goodbye";
 }
 
 void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 {
+	Trie t;
+	t.root = NULL;
+
 	int n;
 	char buff[BUFFSIZE];
 	
@@ -74,19 +133,29 @@ void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 				++argCount;
 
 		char** args = calloc(argCount, sizeof(char*));
-		int j = 1;
+		argCount = 1;
 		args[0] = buff;
 
 		for (int i = 0; i < n; ++i)
 		{
 			if (buff[i] == ' ')
 			{
-				args[j++] = &buff[i] + 1;
+				args[argCount++] = &buff[i] + 1;
 				buff[i] = '\0';
 			}
 		}
 
-		performOperation(argCount, args);
+		char* res = performOperation(argCount, args, &t);
+		
+		n = write(connfd, res, strlen(res) + 1);
+		if (n < 0)
+		{
+			perror("error sending response");
+			exit(-1);
+		}
+		
+		if (strcmp("Goodbye", res) == 0)
+			break;
 	}
 }
 

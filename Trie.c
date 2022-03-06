@@ -1,4 +1,4 @@
-#include "trie.h"
+#include "Trie.h"
 #include <assert.h>
 #include <stdlib.h>
 
@@ -23,7 +23,7 @@ char** put(Trie* trie, int index)
 	}
 
 	if (!traverse->children[index])
-		traverse->children[trieIndex] = calloc(1, sizeof(TrieNode));
+		traverse->children[index] = calloc(1, sizeof(TrieNode));
 
 	traverse = traverse->children[index];
 
