@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,10 +11,13 @@
 #include <sys/wait.h>
 #include <sys/msg.h>
 #include <arpa/inet.h>
-#include "Trie.h"
 
 #define MAX_PENDING 5
 #define BUFFSIZE 256
+#define DATABASE_LOC "database.txt"
+// Trie will be indexed for index 0 to 9, for each digit
+#define TRIE_CHILD_COUNT 10
+
 
 typedef void Sigfunc(int);
 key_t myKey;
@@ -24,6 +28,71 @@ typedef struct msgbuf
 	pid_t sender_pid;
 	char text[64];
 } msgbuf;
+
+typedef struct TrieNode
+{
+	char* data;
+	struct TrieNode* children[TRIE_CHILD_COUNT];
+} TrieNode;
+
+typedef struct Trie{
+	TrieNode* root;
+} Trie;
+
+char** put(Trie* trie, int index)
+{
+	assert(index >= 0);
+
+	if (trie->root == NULL)
+		trie->root = calloc(1, sizeof(TrieNode));
+
+	TrieNode* traverse = trie->root;
+
+	while (index > 9)
+	{
+		int trieIndex = index % 10;
+		index /= 10;
+
+		if (!traverse->children[trieIndex])
+			traverse->children[trieIndex] = calloc(1, sizeof(TrieNode));
+
+		traverse = traverse->children[trieIndex];
+	}
+
+	if (!traverse->children[index])
+		traverse->children[index] = calloc(1, sizeof(TrieNode));
+
+	traverse = traverse->children[index];
+
+	return &traverse->data;
+}
+
+char* get(Trie* trie, int index)
+{	
+	if (trie->root == NULL)
+		return NULL;
+
+	TrieNode* traverse = trie->root;
+
+	if (index == 0)
+	{
+		if (traverse->children[0] == NULL)
+			return NULL;
+	
+		return traverse->children[0]->data;
+	}
+
+	while (traverse && index)
+	{
+		traverse = traverse->children[index % 10];
+		index /= 10;
+	}
+
+	if (!traverse)
+		return NULL;
+
+	return traverse->data;
+}
 
 Sigfunc* Signal(int signo, Sigfunc* func)
 {
@@ -46,6 +115,28 @@ void sig_child(int signo)
 
 	while ((pid = waitpid(-1, &stat, WNOHANG)) > 0)
 		printf("Child terminated: %d\n", pid);
+}
+
+void flush(FILE* fp, TrieNode* t, int val)
+{
+	if (t == NULL)
+		return;
+	
+	if (t->data != NULL)
+		fprintf(fp, "%d %s\n", val, t->data);
+	
+	for (int i = 0; i < TRIE_CHILD_COUNT; ++i)
+		flush(fp, t->children[i], val * 10 + i);
+}
+
+void flushDatabaseToFile(Trie* t)
+{
+	FILE* fp = fopen(DATABASE_LOC, "w");
+	
+	if (t != NULL)
+		flush(fp, t->root, 0);
+
+	fclose(fp);
 }
 
 char* performOperation(int argc, char** argv, Trie* t)
@@ -82,6 +173,8 @@ char* performOperation(int argc, char** argv, Trie* t)
 		
 		*storedVal = calloc(strlen(val), sizeof(char));
 		strcpy(*storedVal, val);
+
+		flushDatabaseToFile(t);
 		return "OK";
 	}
 
@@ -106,6 +199,7 @@ char* performOperation(int argc, char** argv, Trie* t)
 			return "Key not found";
 		free(*storedVal);
 		*storedVal = NULL;
+		flushDatabaseToFile(t);
 		return "OK";
 	}
 
@@ -184,7 +278,7 @@ void databaseProcess()
 {
 	// Load database from file
 	
-	char* fileLoc = "database.txt";
+	char* fileLoc = DATABASE_LOC;
 	Trie t;
 	t.root = NULL;
 
