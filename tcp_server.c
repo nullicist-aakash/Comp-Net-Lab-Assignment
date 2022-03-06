@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/wait.h>
+#include <sys/msg.h>
 #include <arpa/inet.h>
 #include "Trie.h"
 
@@ -15,7 +16,14 @@
 #define BUFFSIZE 256
 
 typedef void Sigfunc(int);
-Trie t;
+key_t myKey;
+
+typedef struct msgbuf
+{
+	long mtype;
+	pid_t sender_pid;
+	char text[64];
+} msgbuf;
 
 Sigfunc* Signal(int signo, Sigfunc* func)
 {
@@ -42,12 +50,12 @@ void sig_child(int signo)
 
 char* performOperation(int argc, char** argv, Trie* t)
 {
-/*	printf("Received: ");
+	printf("Command to execute: ");
 
 	for (int i = 0; i < argc; ++i)
-		printf("'%s' ", argv[i]);
+		printf("%s ", argv[i]);
 	printf("\n");
-*/
+
 	char* reqErr = "Invalid Request";
 
 	if (argc < 1 || argc > 3)
@@ -107,6 +115,14 @@ char* performOperation(int argc, char** argv, Trie* t)
 
 void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 {
+	int qid = msgget(myKey, IPC_CREAT | 0660);
+
+	if (qid == -1)
+	{
+		perror("qid error");
+		exit(-1);
+	}
+
 	int n;
 	char buff[BUFFSIZE];
 	
@@ -124,8 +140,99 @@ void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 		}
 		buff[n] = 0;
 
-		// split the input on the basis of spaces
+		// prepare the message
+		msgbuf msg;
+		msg.sender_pid = getpid();
+		msg.mtype = 1;
+		memset(msg.text, 0, sizeof(msg.text));
+		strcpy(msg.text, buff);
 
+		// send the message to database
+		int len = sizeof(msgbuf) - sizeof(long);
+		int result = msgsnd(qid, &msg, len, 0);
+
+
+		if (result == -1)
+		{
+			perror("child queue write error");
+			exit(-1);
+		}
+
+		// read the reply of database
+		result = msgrcv(qid, &msg, sizeof(msgbuf) - sizeof(long), getpid(), 0);
+
+		if (result == -1)
+		{
+			perror("queue read error");
+			exit(-1);
+		}
+		
+		// send the response back to client
+		n = write(connfd, msg.text, strlen(msg.text) + 1);
+		if (n < 0)
+		{
+			perror("error sending response");
+			exit(-1);
+		}
+		
+		if (strcmp("Goodbye", msg.text) == 0)
+			break;
+	}
+}
+
+void databaseProcess()
+{
+	// Load database from file
+	
+	char* fileLoc = "database.txt";
+	Trie t;
+	t.root = NULL;
+
+	// read database from file, if it exists
+	if (access(fileLoc, F_OK) == 0)
+	{
+		// read file
+		FILE* fp = fopen(fileLoc, "r");
+		int val;
+		char buff[BUFFSIZE];
+
+		while (fscanf(fp, "%d %s", &val, buff) != EOF)
+		{
+			char** ptr = put(&t, val);
+			*ptr = calloc(strlen(buff) + 1, sizeof(char));
+			strcpy(*ptr, buff);
+		}
+	}
+
+	// get attached to queue
+	int qid = msgget(myKey, IPC_CREAT | 0660);
+
+	if (qid == -1)
+	{
+		perror("queue create error");
+		exit(-1);
+	}
+
+
+	while (1)
+	{
+		int result, length;
+		msgbuf buffer;
+
+		length = sizeof(msgbuf) - sizeof(long);
+
+		// get the request
+		if ((result = msgrcv(qid, &buffer, length, 1, 0)) == -1)
+		{
+			perror("queue reading error");
+			exit(-1);
+		}
+
+		// process the request
+		char* buff = buffer.text;
+		int n = strlen(buff);
+
+		// -- split the request
 		int argCount = 1;
 		for (int i = 0; i < n; ++i)
 			if (buff[i] == ' ')
@@ -144,24 +251,33 @@ void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
 			}
 		}
 
+		// get the response from database
 		char* res = performOperation(argCount, args, &t);
-		
-		n = write(connfd, res, strlen(res) + 1);
-		if (n < 0)
+
+		// send the response back to sender
+		buffer.mtype = buffer.sender_pid;
+		buffer.sender_pid = 0;
+		strcpy(buffer.text, res);
+
+
+		result = msgsnd(qid, &buffer, sizeof(msgbuf) - sizeof(long), 0);
+		if (result == -1)
 		{
-			perror("error sending response");
+			perror("queue write error");
 			exit(-1);
 		}
-		
-		if (strcmp("Goodbye", res) == 0)
-			break;
 	}
 }
 
 void main(int argc, char** argv)
 {
-	t.root = NULL;
-	key_t myKey = ftok(".", 'a');
+	myKey = ftok(".", 'a');
+
+	if (fork() == 0)
+	{
+		databaseProcess();
+		exit(0);
+	}
 
 	int listenfd;
 	struct sockaddr_in servaddr;
