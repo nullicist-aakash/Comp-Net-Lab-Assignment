@@ -8,9 +8,10 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
+#include "Trie.h"
 
 #define MAX_PENDING 5
-#define BUFFERSIZE 32
+#define BUFFSIZE 256
 
 typedef void Sigfunc(int);
 
@@ -37,9 +38,56 @@ void sig_child(int signo)
 		printf("Child terminated: %d\n", pid);
 }
 
-void do_task(int connfd, struct sockaddr *cliaddr, socklen_t clilen)
+void performOperation(int argc, char** argv)
 {
+	printf("args received count: %d\n\t", argc);
 
+	for (int i = 0; i < argc; ++i)
+		printf("%s, ", argv[i]);
+	printf("\n");
+}
+
+void do_task(int connfd, struct sockaddr_in *cliaddr, socklen_t clilen)
+{
+	int n;
+	char buff[BUFFSIZE];
+	
+	printf("Connection established with client: %s\n", inet_ntoa(cliaddr->sin_addr));
+
+	while (1)
+	{
+		// read the input from client
+		n = read(connfd, buff, BUFFSIZE);
+		
+		if (n <= 0)
+		{
+			perror("read error");
+			exit(-1);
+		}
+		buff[n] = 0;
+
+		// split the input on the basis of spaces
+
+		int argCount = 1;
+		for (int i = 0; i < n; ++i)
+			if (buff[i] == ' ')
+				++argCount;
+
+		char** args = calloc(argCount, sizeof(char*));
+		int j = 1;
+		args[0] = buff;
+
+		for (int i = 0; i < n; ++i)
+		{
+			if (buff[i] == ' ')
+			{
+				args[j++] = &buff[i] + 1;
+				buff[i] = '\0';
+			}
+		}
+
+		performOperation(argCount, args);
+	}
 }
 
 void main(int argc, char** argv)
@@ -109,7 +157,7 @@ void main(int argc, char** argv)
 		{
 			close(listenfd);
 
-			do_task(connfd, (struct sockaddr*)&clilen, sizeof(clilen));
+			do_task(connfd, &cliaddr, sizeof(clilen));
 			
 			exit(0);
 		}

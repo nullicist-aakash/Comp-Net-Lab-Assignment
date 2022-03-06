@@ -25,5 +25,3 @@ typedef struct Trie{
 char** put(Trie*, int);
 char* get(Trie*, int);
 int del(Trie*, int);
-
-#endif
